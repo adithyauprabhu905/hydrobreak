@@ -11,6 +11,7 @@ import tkinter as tk
 
 from config import ConfigStore
 from reminder import ReminderEngine, ReminderEvent, ReminderKind
+from startup import set_run_at_startup
 from tray import TrayController
 from ui.popup import ReminderPopup
 from ui.settings import SettingsWindow
@@ -25,8 +26,7 @@ class HydroBreakApp:
 
         self._popup = ReminderPopup(
             root=self._root,
-            timeout_sec=self._config.get().popup_timeout_sec,
-            sound_enabled=self._config.get().sound_enabled,
+            config=self._config,
             on_snooze=self._handle_snooze,
             on_done=self._handle_done,
         )
@@ -43,6 +43,9 @@ class HydroBreakApp:
             on_trigger=self._trigger_now,
             on_quit=self._quit,
         )
+
+        # Sync startup setting on launch
+        set_run_at_startup(self._config.get().run_at_startup)
 
     @staticmethod
     def _create_root() -> tk.Tk:
@@ -61,7 +64,11 @@ class HydroBreakApp:
         self._engine.snooze(kind, minutes=5)
 
     def _handle_done(self, kind: ReminderKind) -> None:
-        pass  # Interval already advanced by the engine when the event fired.
+        if kind is ReminderKind.WATER:
+            self._config.log_water(1)
+        elif kind is ReminderKind.STRETCH:
+            self._config.log_stretch(1)
+        self._tray.update_menu()
 
     def _open_settings(self) -> None:
         self._root.after(0, self._settings_window.open)
@@ -70,6 +77,7 @@ class HydroBreakApp:
         settings = self._config.get()
         self._popup.set_defaults(settings.popup_timeout_sec, settings.sound_enabled)
         self._engine.apply_interval_change()
+        set_run_at_startup(settings.run_at_startup)
 
     def _trigger_now(self, kind: ReminderKind) -> None:
         self._root.after(0, lambda: self._engine.trigger_now(kind))

@@ -14,6 +14,7 @@ from config import ConfigStore
 class ReminderKind(Enum):
     WATER = auto()
     FOOD = auto()
+    STRETCH = auto()
 
 
 @dataclass
@@ -35,6 +36,14 @@ _FOOD_MESSAGES = [
     ("Meal reminder", "Even compilers need fuel. So do you."),
 ]
 
+_STRETCH_MESSAGES = [
+    ("Posture check!", "Sit up tall, roll your shoulders back and relax your neck."),
+    ("20-20-20 Eye Break", "Look at an object 20 feet away for 20 seconds to rest your eyes."),
+    ("Stand up & stretch", "Get up from your chair! A quick stretch boosts circulation and energy."),
+    ("Wrist & hand shake", "Shake out your wrists and stretch your fingers to prevent strain."),
+    ("Deep breath break", "Take three deep breaths. Inhale calm, exhale tension."),
+]
+
 
 class ReminderEngine:
     """Runs a background thread that ticks once per second and fires due reminders."""
@@ -47,12 +56,15 @@ class ReminderEngine:
         self._lock = threading.Lock()
         self._water_msg_idx = 0
         self._food_msg_idx = 0
+        self._stretch_msg_idx = 0
         self._reset_clocks()
 
     def _reset_clocks(self) -> None:
         now = time.monotonic()
-        self._next_water = now + self._config.get().water_interval_min * 60
-        self._next_food = now + self._config.get().food_interval_min * 60
+        settings = self._config.get()
+        self._next_water = now + settings.water_interval_min * 60
+        self._next_food = now + settings.food_interval_min * 60
+        self._next_stretch = now + settings.stretch_interval_min * 60
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -71,46 +83,61 @@ class ReminderEngine:
             now = time.monotonic()
             if kind is ReminderKind.WATER:
                 self._next_water = now + minutes * 60
-            else:
+            elif kind is ReminderKind.FOOD:
                 self._next_food = now + minutes * 60
+            elif kind is ReminderKind.STRETCH:
+                self._next_stretch = now + minutes * 60
 
     def trigger_now(self, kind: ReminderKind) -> None:
         event = self._build_event(kind)
         self._on_due(event)
-        self.snooze(kind, self._config.get().water_interval_min if kind is ReminderKind.WATER
-                    else self._config.get().food_interval_min)
+        settings = self._config.get()
+        interval = 5
+        if kind is ReminderKind.WATER:
+            interval = settings.water_interval_min
+        elif kind is ReminderKind.FOOD:
+            interval = settings.food_interval_min
+        elif kind is ReminderKind.STRETCH:
+            interval = settings.stretch_interval_min
+        self.snooze(kind, interval)
 
     def _build_event(self, kind: ReminderKind) -> ReminderEvent:
         if kind is ReminderKind.WATER:
             title, message = _WATER_MESSAGES[self._water_msg_idx % len(_WATER_MESSAGES)]
             self._water_msg_idx += 1
-        else:
+        elif kind is ReminderKind.FOOD:
             title, message = _FOOD_MESSAGES[self._food_msg_idx % len(_FOOD_MESSAGES)]
             self._food_msg_idx += 1
+        else:
+            title, message = _STRETCH_MESSAGES[self._stretch_msg_idx % len(_STRETCH_MESSAGES)]
+            self._stretch_msg_idx += 1
         return ReminderEvent(kind=kind, title=title, message=message)
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
             time.sleep(1)
-            settings = self._config.get()
-            if settings.paused:
+            if self._config.is_suppressed():
                 continue
+
+            settings = self._config.get()
             now = time.monotonic()
+            fire_kinds = []
+
             with self._lock:
-                if now >= self._next_water:
+                if settings.water_enabled and now >= self._next_water:
                     self._next_water = now + settings.water_interval_min * 60
-                    fire_water = True
-                else:
-                    fire_water = False
-                if now >= self._next_food:
+                    fire_kinds.append(ReminderKind.WATER)
+
+                if settings.food_enabled and now >= self._next_food:
                     self._next_food = now + settings.food_interval_min * 60
-                    fire_food = True
-                else:
-                    fire_food = False
-            if fire_water:
-                self._on_due(self._build_event(ReminderKind.WATER))
-            if fire_food:
-                self._on_due(self._build_event(ReminderKind.FOOD))
+                    fire_kinds.append(ReminderKind.FOOD)
+
+                if settings.stretch_enabled and now >= self._next_stretch:
+                    self._next_stretch = now + settings.stretch_interval_min * 60
+                    fire_kinds.append(ReminderKind.STRETCH)
+
+            for kind in fire_kinds:
+                self._on_due(self._build_event(kind))
 
     def apply_interval_change(self) -> None:
         """Call after settings intervals change so new values take effect immediately

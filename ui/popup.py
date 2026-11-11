@@ -6,15 +6,19 @@ import sys
 import tkinter as tk
 from typing import Callable, Optional
 
+from config import ConfigStore
 from reminder import ReminderEvent, ReminderKind
 
 _WATER_BG = "#eaf6ff"
 _WATER_ACCENT = "#3aa0e8"
 _FOOD_BG = "#fff4e6"
 _FOOD_ACCENT = "#f2994a"
+_STRETCH_BG = "#f0fff4"
+_STRETCH_ACCENT = "#27ae60"
 
 _WATER_EMOJI = "\U0001F4A7"   # droplet
 _FOOD_EMOJI = "\U0001F34E"    # apple
+_STRETCH_EMOJI = "\U0001F9D8"  # person in lotus position
 
 
 def _beep() -> None:
@@ -36,16 +40,18 @@ class ReminderPopup:
     of stacked windows if reminders overlap.
     """
 
-    _WIDTH = 360
-    _HEIGHT = 190
+    _WIDTH = 380
+    _HEIGHT = 200
     _MARGIN = 24
 
-    def __init__(self, root: tk.Tk, timeout_sec: int, sound_enabled: bool,
+    def __init__(self, root: tk.Tk, config: ConfigStore,
                  on_snooze: Callable[[ReminderKind], None],
                  on_done: Callable[[ReminderKind], None]) -> None:
         self._root = root
-        self._timeout_sec = timeout_sec
-        self._sound_enabled = sound_enabled
+        self._config = config
+        settings = config.get()
+        self._timeout_sec = settings.popup_timeout_sec
+        self._sound_enabled = settings.sound_enabled
         self._on_snooze = on_snooze
         self._on_done = on_done
         self._window: Optional[tk.Toplevel] = None
@@ -73,11 +79,22 @@ class ReminderPopup:
         if self._window is not None:
             self._window.destroy()
 
-        is_water = event.kind is ReminderKind.WATER
-        bg = _WATER_BG if is_water else _FOOD_BG
-        accent = _WATER_ACCENT if is_water else _FOOD_ACCENT
-        emoji = _WATER_EMOJI if is_water else _FOOD_EMOJI
-        self._current_kind = event.kind
+        settings = self._config.get()
+        kind = event.kind
+        if kind is ReminderKind.WATER:
+            bg, accent, emoji = _WATER_BG, _WATER_ACCENT, _WATER_EMOJI
+            action_text = "I drank water"
+            stats_text = f"Today: {settings.water_today_count}/{settings.water_daily_goal} glasses"
+        elif kind is ReminderKind.FOOD:
+            bg, accent, emoji = _FOOD_BG, _FOOD_ACCENT, _FOOD_EMOJI
+            action_text = "I ate food"
+            stats_text = ""
+        else:  # STRETCH
+            bg, accent, emoji = _STRETCH_BG, _STRETCH_ACCENT, _STRETCH_EMOJI
+            action_text = "I stretched"
+            stats_text = f"Today: {settings.stretch_today_count} breaks"
+
+        self._current_kind = kind
 
         win = tk.Toplevel(self._root)
         self._window = win
@@ -104,11 +121,14 @@ class ReminderPopup:
         tk.Label(header, text=event.title, font=("Segoe UI", 13, "bold"), bg=bg, fg=accent).pack(
             side="left", padx=(8, 0))
 
+        if stats_text:
+            tk.Label(header, text=stats_text, font=("Segoe UI", 9), bg=bg, fg="#666666").pack(
+                side="right", pady=(4, 0))
+
         tk.Label(card, text=event.message, font=("Segoe UI", 10), bg=bg, fg="#333333",
                  wraplength=self._WIDTH - 40, justify="left").pack(
             fill="x", padx=14, pady=(8, 10))
 
-        action_text = "I drank water" if is_water else "I ate food"
         self._task_done_var = tk.BooleanVar(value=False)
 
         btn_row = tk.Frame(card, bg=bg)
